@@ -1,0 +1,33 @@
+{
+  "name": "web-scraper",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "dompurify": "^3.1.6",
+    "ejs": "^3.1.10",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "jsdom": "^25.0.1",
+    "natural": "^8.0.1",
+    "node-cache": "^5.1.2",
+    "p-retry": "^6.2.0",
+    "pg": "^8.13.0",
+    "playwright": "^1.47.2",
+    "puppeteer": "^23.4.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "rate-limiter-flexible": "^5.0.3",
+    "redis": "^4.7.0",
+    "turndown": "^7.2.0"
+  }
+}

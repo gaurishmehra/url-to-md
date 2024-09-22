@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Scraper</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #121212; 
+            color: #f4f4f4; 
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            transition: background-color 0.3s ease;
+        }
+
+        h1 {
+            color: #e0e0e0;
+            margin-bottom: 20px;
+            text-align: center;
+            transition: transform 0.3s ease, opacity 0.3s ease; 
+        }
+
+        h1:hover {
+            transform: scale(1.05); 
+            opacity: 0.9;
+        }
+
+        .container {
+            background-color: #242424; 
+            border-radius: 15px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            width: 90%;
+            max-width: 600px; 
+            transition: background-color 0.3s ease, transform 0.3s ease;
+        }
+
+        .container:hover {
+            transform: scale(1.02); 
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 14px;
+            margin-bottom: 20px;
+            border: 1px solid #444; 
+            border-radius: 8px;
+            background-color: #333; 
+            color: #e0e0e0;
+            box-sizing: border-box;
+            transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            box-shadow: 0 0 5px #007bff; 
+        }
+
+        button {
+            background-color: #007bff; 
+            color: white;
+            padding: 14px 25px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.3s ease;
+            margin-right: 10px; 
+        }
+
+        button:hover {
+            background-color: #0056b3; 
+            transform: scale(1.05); 
+        }
+
+        #result {
+            margin-top: 20px;
+            text-align: center; 
+            transition: opacity 0.3s ease; 
+        }
+
+        #downloadBtn {
+            display: none; 
+            background-color: #008CBA; 
+            transition: background-color 0.3s ease, transform 0.3s ease;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet"> 
+</head>
+<body>
+    <h1>Optimized URL Scraper</h1>
+    <div class="container">
+        <input type="text" id="urlInput" placeholder="Enter URL to scrape">
+        <button onclick="scrapeUrl()">Scrape</button>
+        <button id="downloadBtn" onclick="downloadMarkdown()">Download Markdown</button> 
+        <div id="result"></div>
+    </div>
+
+    <script>
+        let markdownContent = '';
+
+        async function scrapeUrl() {
+            const url = document.getElementById('urlInput').value;
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>Scraping... Please wait.</p>';
+            document.getElementById('downloadBtn').style.display = 'none'; 
+
+            try {
+                const response = await axios.post('/scrape', { url });
+                markdownContent = response.data.markdown; 
+                resultDiv.innerHTML = '<p>Scraping completed!</p>';
+                document.getElementById('downloadBtn').style.display = 'inline-block'; 
+            } catch (error) {
+                resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+
+        function downloadMarkdown() {
+            const blob = new Blob([markdownContent], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'scraped_content.md';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
