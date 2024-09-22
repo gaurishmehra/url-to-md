@@ -163,13 +163,16 @@
             loader.style.display = 'block';
 
             try {
+                const startTime = performance.now();
                 const response = await axios.post('/scrape', { url });
+                const endTime = performance.now();
+                
                 markdownContent = response.data.markdown;
-                const executionTime = response.data.executionTime;
+                const executionTime = (endTime - startTime).toFixed(2);
 
                 loader.style.display = 'none';
                 resultDiv.innerHTML = '<p class="fade-in">Scraping completed!</p>';
-                executionTimeDiv.innerHTML = `<p class="fade-in">Execution time: ${executionTime}</p>`;
+                executionTimeDiv.innerHTML = `<p class="fade-in">Execution time: ${executionTime} ms</p>`;
                 document.getElementById('downloadBtn').style.display = 'inline-block';
 
                 // Trigger reflow to ensure the fade-in animation works
