@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>URL Scraper</title>
+    <title>Optimized URL Scraper</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
     <style>
         body {
@@ -69,13 +69,17 @@
             border: none;
             border-radius: 8px;
             cursor: pointer;
-            transition: background-color 0.3s ease, transform 0.3s ease;
+            transition: all 0.3s ease;
             margin-right: 10px; 
         }
 
         button:hover {
             background-color: #0056b3; 
             transform: scale(1.05); 
+        }
+
+        button:active {
+            transform: scale(0.95);
         }
 
         #result {
@@ -87,18 +91,61 @@
         #downloadBtn {
             display: none; 
             background-color: #008CBA; 
-            transition: background-color 0.3s ease, transform 0.3s ease;
+        }
+
+        #executionTime {
+            margin-top: 10px;
+            font-style: italic;
+            color: #888;
+            transition: all 0.3s ease;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        .fade-in {
+            opacity: 0;
+            transition: opacity 0.5s ease-in;
+        }
+
+        .fade-in.show {
+            opacity: 1;
+        }
+
+        #loader {
+            display: none;
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet"> 
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <h1>Optimized URL Scraper</h1>
-    <div class="container">
+    <h1 class="pulse">Optimized URL Scraper</h1>
+    <div class="container fade-in show">
         <input type="text" id="urlInput" placeholder="Enter URL to scrape">
         <button onclick="scrapeUrl()">Scrape</button>
         <button id="downloadBtn" onclick="downloadMarkdown()">Download Markdown</button> 
+        <div id="loader"></div>
         <div id="result"></div>
+        <div id="executionTime"></div>
     </div>
 
     <script>
@@ -107,16 +154,33 @@
         async function scrapeUrl() {
             const url = document.getElementById('urlInput').value;
             const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '<p>Scraping... Please wait.</p>';
-            document.getElementById('downloadBtn').style.display = 'none'; 
+            const executionTimeDiv = document.getElementById('executionTime');
+            const loader = document.getElementById('loader');
+
+            resultDiv.innerHTML = '';
+            executionTimeDiv.innerHTML = '';
+            document.getElementById('downloadBtn').style.display = 'none';
+            loader.style.display = 'block';
 
             try {
                 const response = await axios.post('/scrape', { url });
-                markdownContent = response.data.markdown; 
-                resultDiv.innerHTML = '<p>Scraping completed!</p>';
-                document.getElementById('downloadBtn').style.display = 'inline-block'; 
+                markdownContent = response.data.markdown;
+                const executionTime = response.data.executionTime;
+
+                loader.style.display = 'none';
+                resultDiv.innerHTML = '<p class="fade-in">Scraping completed!</p>';
+                executionTimeDiv.innerHTML = `<p class="fade-in">Execution time: ${executionTime}</p>`;
+                document.getElementById('downloadBtn').style.display = 'inline-block';
+
+                // Trigger reflow to ensure the fade-in animation works
+                void resultDiv.offsetWidth;
+                void executionTimeDiv.offsetWidth;
+
+                resultDiv.querySelector('p').classList.add('show');
+                executionTimeDiv.querySelector('p').classList.add('show');
             } catch (error) {
-                resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+                loader.style.display = 'none';
+                resultDiv.innerHTML = `<p class="fade-in show">Error: ${error.response?.data?.error || error.message}</p>`;
             }
         }
 
@@ -131,6 +195,25 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+
+        // Add hover effect to container
+        const container = document.querySelector('.container');
+        container.addEventListener('mousemove', (e) => {
+            const { left, top, width, height } = container.getBoundingClientRect();
+            const x = (e.clientX - left) / width;
+            const y = (e.clientY - top) / height;
+            
+            container.style.transform = `
+                perspective(1000px)
+                rotateY(${x * 5}deg)
+                rotateX(${y * -5}deg)
+                scale(1.02)
+            `;
+        });
+
+        container.addEventListener('mouseleave', () => {
+            container.style.transform = 'none';
+        });
     </script>
 </body>
 </html>

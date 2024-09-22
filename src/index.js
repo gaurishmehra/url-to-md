@@ -1,35 +1,37 @@
 const express = require('express');
 const axios = require('axios');
-const cheerio = require('cheerio');
-const TurndownService = require('turndown');
-const cors = require('cors');
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
-const NodeCache = require('node-cache');
-const rateLimit = require('express-rate-limit');
-const path = require('path'); // Import the 'path' module
+const TurndownService = require('turndown');
+const cors = require('cors');
+const { performance } = require('perf_hooks');
+const path = require('path');
+const stream = require('stream');
+const { promisify } = require('util');
 
 const app = express();
 const port = 3000;
 
 app.use(express.json());
 app.use(cors());
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
-// Initialize JSDOM and DOMPurify only once
+const pipeline = promisify(stream.pipeline);
 const window = new JSDOM('').window;
 const DOMPurify = createDOMPurify(window);
 
-// Create a TurndownService instance
+// Initialize TurndownService with improved rules
 const turndownService = new TurndownService({
   headingStyle: 'atx',
   codeBlockStyle: 'fenced',
   bulletListMarker: '-',
   emDelimiter: '_',
   strongDelimiter: '**',
-  strikethroughDelimiter: '~~',
 });
 
-// Retain all links
+// Add improved rules for links, blockquotes, and images
 turndownService.addRule('links', {
   filter: 'a',
   replacement: (content, node) => {
@@ -38,94 +40,100 @@ turndownService.addRule('links', {
   }
 });
 
-// Preserve code blocks
-turndownService.addRule('codeBlocks', {
-  filter: node => ['pre', 'code'].includes(node.nodeName.toLowerCase()),
+turndownService.addRule('blockquotes', {
+  filter: 'blockquote',
+  replacement: (content) => {
+    return `> ${content.trim().replace(/\n/g, '\n> ')}`;
+  }
+});
+
+turndownService.addRule('images', {
+  filter: 'img',
   replacement: (content, node) => {
-    const language = (node.getAttribute('class') || '').match(/language-(\S+)/)?.[1] || '';
-    return `\n\n\`\`\`${language}\n${content.trim()}\n\`\`\`\n\n`;
+    const alt = node.getAttribute('alt') || '';
+    const src = node.getAttribute('src') || '';
+    return `![${alt}](${src})`;
   }
 });
 
-// Cache with longer TTL for repeated requests
-const cache = new NodeCache({ stdTTL: 600, checkperiod: 360 });
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests, please try again later.'
-});
-
-app.use(limiter);
-
-// Dynamic Import of p-retry
-async function fetchWithRetry(url) {
-  const pRetry = await import('p-retry');
-  return pRetry.default(() => axios.get(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-    timeout: 5000,
-  }), { retries: 2 });
-}
-
-// Optimized content extraction
-function extractMainContent($) {
-  let content = $('main, article, .content, #main, #content').first().html();
-  if (!content) {
-    content = $('body').html(); // Fallback to entire body
-  }
-  return content;
-}
-
-async function scrapeUrl(urlToScrape) {
-  const startTime = process.hrtime();
-
-  // Check cache for quick response
-  const cachedResult = cache.get(urlToScrape);
-  if (cachedResult) {
-    return cachedResult;
-  }
+async function fetchWithTimeout(url, timeout = 8000) {
+  const source = axios.CancelToken.source();
+  const timer = setTimeout(() => source.cancel('Request timed out'), timeout);
 
   try {
-    // Use the dynamic import for p-retry
-    const response = await fetchWithRetry(urlToScrape);
+    const response = await axios.get(url, {
+      cancelToken: source.token,
+      responseType: 'stream',
+      timeout,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    clearTimeout(timer);
+    return response;
+  } catch (error) {
+    clearTimeout(timer);
+    throw error;
+  }
+}
 
-    const html = response.data;
-    const $ = cheerio.load(html, { decodeEntities: false });
+async function scrapeUrl(url) {
+  const startTime = performance.now();
 
-    // Minimal and fast DOM element removal
-    $('script, style, iframe, noscript, .hidden, .sidebar, .ads, .comments, img').remove();
-
-    const title = $('title').text().trim();
-    const metaDescription = $('meta[name="description"]').attr('content') || '';
-    const h1 = $('h1').first().text().trim();
-
-    const mainContent = extractMainContent($);
-
-    // DOMPurify sanitization (essential tags only)
-    const sanitizedHtml = DOMPurify.sanitize(mainContent, {
-      ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'a', 'pre', 'code', 'blockquote', 'strong', 'em', 'br', 'table', 'thead', 'tbody', 'tr', 'td', 'th'],
-      ALLOWED_ATTR: ['href']
+  try {
+    const response = await fetchWithTimeout(url);
+    const html = await new Promise((resolve, reject) => {
+      const chunks = [];
+      pipeline(
+        response.data,
+        new stream.Writable({
+          write(chunk, encoding, callback) {
+            chunks.push(chunk);
+            callback();
+          },
+          final(callback) {
+            resolve(Buffer.concat(chunks).toString('utf8'));
+            callback();
+          }
+        })
+      ).catch(reject);
     });
 
-    // Convert sanitized HTML to Markdown
-    const markdown = turndownService.turndown(sanitizedHtml);
+    const dom = new JSDOM(html);
+    const { document } = dom.window;
 
-    // Clean up markdown
-    const cleanedMarkdown = `# ${title}\n\n${metaDescription ? `*${metaDescription}*\n\n` : ''}${h1 !== title ? `## ${h1}\n\n` : ''}${markdown}`
+    // Remove unnecessary elements
+    const tagsToRemove = ['script', 'style', 'iframe', 'noscript'];
+    tagsToRemove.forEach(tag => {
+      document.querySelectorAll(tag).forEach(el => el.remove());
+    });
+
+    // Improved content selection to handle diverse structures
+    const mainContent = document.querySelector('main, article, section, .content, .post, .entry') || document.body;
+
+    // Sanitize the extracted content
+    const sanitizedContent = DOMPurify.sanitize(mainContent.innerHTML, {
+      ALLOWED_TAGS: ['p', 'a', 'strong', 'em', 'code', 'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img'],
+      ALLOWED_ATTR: ['href', 'src', 'alt']
+    });
+
+    // Convert to markdown with improved formatting
+    const markdown = turndownService.turndown(sanitizedContent);
+
+    // Extract title, description, and main heading for better markdown structure
+    const title = document.querySelector('title')?.textContent.trim() || '';
+    const metaDescription = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+    const h1 = document.querySelector('h1')?.textContent.trim() || '';
+
+    // Clean markdown with enhanced formatting
+    const cleanedMarkdown = `# ${title}\n\n${metaDescription ? `*${metaDescription}*\n\n` : ''}${h1 && h1 !== title ? `## ${h1}\n\n` : ''}${markdown}`
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    // Measure execution time
-    const endTime = process.hrtime(startTime);
-    const executionTime = (endTime[0] * 1000 + endTime[1] / 1e6).toFixed(2);
+    const endTime = performance.now();
+    const executionTime = `${(endTime - startTime).toFixed(2)} ms`;
 
-    const result = { markdown: cleanedMarkdown, executionTime: `${executionTime} ms` };
-
-    // Cache the result
-    cache.set(urlToScrape, result);
-
-    return result;
+    return { markdown: cleanedMarkdown, executionTime };
   } catch (error) {
     console.error('Error scraping URL:', error);
     throw new Error(`Error scraping URL: ${error.message}`);
@@ -146,11 +154,6 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
-// Serve the index.html file 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html')); 
-});
-
 app.listen(port, () => {
-  console.log(`Optimized Scraper API listening at http://localhost:${port}`);
+  console.log(`Optimized Scraper listening at http://localhost:${port}`);
 });
