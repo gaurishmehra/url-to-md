@@ -1,8 +1,10 @@
-const cheerio = require('cheerio');
+const { Parser } = require('htmlparser2');
 const TurndownService = require('turndown');
 const NodeCache = require('node-cache');
 const https = require('https');
 const http = require('http');
+const zlib = require('zlib');
+const crypto = require('crypto');
 
 const cache = new NodeCache({ stdTTL: 3600 });
 const turndownService = new TurndownService({
@@ -15,10 +17,10 @@ const turndownService = new TurndownService({
 
 const agents = {
   http: new http.Agent({ keepAlive: true }),
-  https: new https.Agent({ keepAlive: true }),
+  https: new https.Agent({ keepAlive: true, rejectUnauthorized: false }),
 };
 
-function fetchWithTimeout(url, timeout = 8000) {
+async function fetchWithTimeout(url, timeout = 10000) {
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     const request = protocol.get(url, {
@@ -26,16 +28,31 @@ function fetchWithTimeout(url, timeout = 8000) {
       agent: url.startsWith('https') ? agents.https : agents.http,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
       },
     }, (response) => {
       if (response.statusCode >= 400) {
         reject(new Error(`HTTP error! status: ${response.statusCode}`));
         return;
       }
+
       let data = '';
-      response.setEncoding('utf8'); // Ensure faster parsing of incoming data
-      response.on('data', (chunk) => { data += chunk; });
-      response.on('end', () => resolve(data));
+      const encoding = response.headers['content-encoding'];
+      let stream = response;
+
+      if (encoding === 'gzip') {
+        stream = response.pipe(zlib.createGunzip());
+      } else if (encoding === 'deflate') {
+        stream = response.pipe(zlib.createInflate());
+      }
+
+      stream.setEncoding('utf8');
+      stream.on('data', (chunk) => { data += chunk; });
+      stream.on('end', () => resolve(data));
     });
     request.on('error', reject);
     request.on('timeout', () => {
@@ -46,48 +63,67 @@ function fetchWithTimeout(url, timeout = 8000) {
 }
 
 async function scrapeUrl(url) {
-  const cachedResult = cache.get(url);
+  const contentHash = crypto.createHash('md5').update(url).digest('hex');
+  const cachedResult = cache.get(contentHash);
   if (cachedResult) return cachedResult;
 
   try {
     const html = await fetchWithTimeout(url);
-    const $ = cheerio.load(html, { decodeEntities: false });
 
-    // Remove unnecessary elements immediately
-    $('script, style, iframe, noscript').remove();
+    let extractedContent = '';
+    const parser = new Parser({
+      onopentag: (name, attributes) => {
+        extractedContent += `<${name}`;
+        for (const attr in attributes) {
+          extractedContent += ` ${attr}="${attributes[attr]}"`;
+        }
+        extractedContent += '>';
+      },
+      ontext: (text) => {
+        extractedContent += text;
+      },
+      onclosetag: (name) => {
+        extractedContent += `</${name}>`;
+      },
+    }, { decodeEntities: true });
 
-    // Extract content fast using specific, common tags
-    let mainContent = $('main, article, section, .content, .post, .entry').first().html();
-    if (!mainContent) {
-      mainContent = $('body').html(); // Fallback to body if not found
-    }
+    parser.write(html);
+    parser.end();
 
-    const sanitizedContent = sanitizeHtml(mainContent);
+    const sanitizedContent = sanitizeHtml(extractedContent);
     const markdown = turndownService.turndown(sanitizedContent);
 
-    // Metadata extraction (very fast as it's simple and direct)
-    const title = $('title').text().trim();
-    const metaDescription = $('meta[name="description"]').attr('content') || '';
-    const h1 = $('h1').first().text().trim();
+    // Metadata extraction (you might need to adjust this based on your needs)
+    const title = extractMetadata(sanitizedContent, 'title') || ''; 
+    const metaDescription = extractMetadata(sanitizedContent, 'description') || '';
 
-    // Construct final markdown efficiently
-    const cleanedMarkdown = `# ${title}\n\n${metaDescription ? `*${metaDescription}*\n\n` : ''}${h1 && h1 !== title ? `## ${h1}\n\n` : ''}${markdown}`
+    const cleanedMarkdown = `# ${title}\n\n${metaDescription ? `*${metaDescription}*\n\n` : ''}${markdown}`
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
     const result = { markdown: cleanedMarkdown };
-    cache.set(url, result);
+    cache.set(contentHash, result);
     return result;
   } catch (error) {
     throw new Error(`Failed to scrape URL: ${error.message}`);
   }
 }
 
-// Faster, safer HTML sanitizer based on DOM traversal
 function sanitizeHtml(html) {
-  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, (match) => {
+      return match.replace(/\s+(?!(href|src|alt)=)[^\s>]+/g, '');
+    });
+}
+
+// Helper function to extract metadata 
+function extractMetadata(html, metaName) {
+  const regex = new RegExp(`<meta\\s+[^>]*name="${metaName}"\\s+content="([^"]*)"[^>]*>`, 'i');
+  const match = html.match(regex);
+  return match ? match[1] : null; 
 }
 
 module.exports = { scrapeUrl };
